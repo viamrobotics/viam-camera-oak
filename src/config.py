@@ -13,7 +13,7 @@ DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 DEFAULT_COLOR_ORDER = "rgb"
 DEFAULT_INTERLEAVED = False
-LOGGER = getLogger("viam-oak-config-logger")
+LOGGER = getLogger("viam-luxonis-configuration")
 
 
 def handle_err(err_msg: str) -> None:
@@ -78,8 +78,9 @@ def validate_dimension(attribute: str, attribute_map: Mapping[str, Value]) -> No
 
 
 class BaseConfig:
-    def __init__(self, attribute_map: Mapping[str, Value]):
+    def __init__(self, attribute_map: Mapping[str, Value], name: str):
         self.attribute_map = attribute_map
+        self.name = name
 
     @classmethod
     def validate(cls, attribute_map: Mapping[str, Value]) -> List[str]:
@@ -333,21 +334,54 @@ class YDNConfig(BaseConfig):
     is_object_tracker: bool = False
 
     blob_path: str
-    label_map: List[str]
+    labels: List[str]
     confidence_threshold: float = 0.25
     iou_threshold: float = 0.5
     anchors: List[float]
     anchor_masks: Mapping[str, List[int]]
     coordinate_size: int = 4
 
+    # Used in OAK to check what service this config is for
+    service_name: str
+    service_id: str
+
+    @classmethod
+    def from_kwargs(cls, **kwargs):
+        self = cls(dict(), kwargs["service_name"])
+        self.input_source = kwargs["input_source"]
+        self.width = kwargs["width"]
+        self.height = kwargs["height"]
+        self.num_threads = kwargs.get("num_threads", self.num_threads)
+        self.num_nce_per_thread = kwargs.get(
+            "num_nce_per_thread", self.num_nce_per_thread
+        )
+        self.is_object_tracker = kwargs.get("is_object_tracker", self.is_object_tracker)
+
+        self.blob_path = kwargs["blob_path"]
+        self.labels = kwargs["labels"]
+        self.confidence_threshold = kwargs.get(
+            "confidence_threshold", self.confidence_threshold
+        )
+        self.iou_threshold = kwargs.get("iou_threshold", self.iou_threshold)
+        self.anchors = kwargs.get("anchors", [])
+        self.anchor_masks = kwargs.get("anchor_masks", dict())
+        for l in self.anchor_masks.values():
+            for i, num in enumerate(l):
+                l[i] = int(num)
+        self.coordinate_size = kwargs.get("coordinate_size", self.coordinate_size)
+
+        self.service_name = kwargs["service_name"]
+        self.service_id = kwargs["service_id"]
+        return self
+
     @classmethod
     def validate(self, attribute_map: Mapping[str, Value]) -> List[str]:
         # Validate "input_source"
         validate_attr_type("input_source", "string_value", attribute_map, True)
         input_source = attribute_map.get("input_source", default=None).string_value
-        if input_source not in ["cam_a", "cam_b", "cam_c", "color", "depth"]:
+        if input_source not in ["cam_a", "cam_b", "cam_c", "color"]:
             handle_err(
-                f'"input_source" attribute must be either "cam_a", "cam_b", or "cam_c", not "{input_source}"'
+                f'"input_source" attribute must be either "color", "cam_a", "cam_b", or "cam_c", not "{input_source}"'
             )
 
         # Validate "width_px" and "height_px"
@@ -469,7 +503,7 @@ class YDNConfig(BaseConfig):
         cam_name_container = attribute_map.get("cam_name", None)
         if cam_name_container is None:
             handle_err(
-                "Critical logic error: cam_name should not be None since we should've asserted it to not be."
+                "Critical logic error: cam_name should not be None since we should've asserted it to not be. This is likely a bug."
             )
         cam_name = cam_name_container.string_value
         if len(cam_name) == 0:
@@ -494,7 +528,7 @@ class YDNConfig(BaseConfig):
 
         yolo_cfg = self.attribute_map["yolo_config"].struct_value.fields
         self.blob_path = yolo_cfg["blob_path"].string_value
-        self.label_map = [label for label in yolo_cfg["labels"].list_value]
+        self.labels = yolo_cfg["labels"].list_value
         self.confidence_threshold = (
             yolo_cfg["confidence_threshold"].number_value or self.confidence_threshold
         )
